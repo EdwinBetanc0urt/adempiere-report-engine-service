@@ -266,43 +266,6 @@ public class QueryDefinition {
 			;
 		}
 
-		//	Add Limit records
-		StringBuffer limitClause = new StringBuffer();
-		if(this.limit != NO_LIMIT && DB.getDatabase().isPagingSupported()) {
-			if(this.limit == 0) {
-				withLimit(100, 0);
-			}
-
-			// limitClause
-				// TODO: Implement with use https://github.com/adempiere/adempiere/pull/4142
-				// .append(" LIMIT ")
-				// .append(this.limit)
-				// .append(" OFFSET ")
-				// .append(this.offset)
-				// .append(completeQueryCount)
-			;
-
-			// Apply pagination AFTER ordering using the database-specific paging
-			// syntax (PostgreSQL LIMIT/OFFSET, Oracle ROWNUM wrapper). Doing it at
-			// the database level guarantees the limit is applied to the already
-			// ordered result set, so paging is consistent with the native
-			// ReportEngine. addPagingSQL uses 1-based row numbers: the first row is
-			// offset + 1 and the last row is offset + limit.
-			// int start = this.offset + 1;
-			// int end = this.offset + this.limit;
-			// completeQuery = new StringBuffer(
-			// 	DB.getDatabase().addPagingSQL(baseQuery.toString(), start, end)
-			// );
-
-			if(!Util.isEmpty(this.getDynamicWhereClause(), true)) {
-				limitClause.insert(0, " AND ");
-			} else {
-				limitClause.insert(0, " WHERE ");
-			}
-			limitClause.append("ROWNUM <= ").append(this.limit);
-			limitClause.append(" AND ROWNUM >= ").append(this.offset);
-		}
-
 		// Add Group By
 		String groupByClause = "";
 		if(!Util.isEmpty(getGroupBy(), true)) {
@@ -316,9 +279,31 @@ public class QueryDefinition {
 			orderByClause = " ORDER BY " + getOrderBy();
 		}
 
+		// The count query is the full ordered query without paging.
 		String completeSql = query.toString() + groupByClause + orderByClause;
-		String completeSqlWithLimit = query.toString() + limitClause + groupByClause + orderByClause;
 		withCompleteQueryCount(completeSql);
+
+		// Apply pagination AFTER ordering using the database-specific paging syntax
+		// (PostgreSQL LIMIT/OFFSET, Oracle ROWNUM subquery wrapper). Doing it at the
+		// database level guarantees the limit is applied to the already ordered result
+		// set, so paging is consistent with the native ReportEngine and the database can
+		// optimize it (top-N) instead of materializing the whole view. addPagingSQL uses
+		// 1-based row numbers: the first row is offset + 1 and the last is offset + limit.
+		String completeSqlWithLimit = completeSql;
+		if(this.limit != NO_LIMIT && DB.getDatabase().isPagingSupported()) {
+			// limitClause
+				// TODO: Implement with use https://github.com/adempiere/adempiere/pull/4142
+				// .append(" LIMIT ")
+				// .append(this.limit)
+				// .append(" OFFSET ")
+				// .append(this.offset)
+				// .append(completeQueryCount)
+			// ;
+			int pageLimit = (this.limit == 0) ? 100 : this.limit;
+			int start = this.offset + 1;
+			int end = this.offset + pageLimit;
+			completeSqlWithLimit = DB.getDatabase().addPagingSQL(completeSql, start, end);
+		}
 		withCompleteQuery(completeSqlWithLimit);
 
 		return this;
