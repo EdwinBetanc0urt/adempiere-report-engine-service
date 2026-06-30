@@ -299,6 +299,15 @@ public class QueryDefinition {
 				// .append(this.offset)
 				// .append(completeQueryCount)
 			// ;
+
+			// if(!Util.isEmpty(this.getDynamicWhereClause(), true)) {
+			// 	limitClause.insert(0, " AND ");
+			// } else {
+			// 	limitClause.insert(0, " WHERE ");
+			// }
+			// limitClause.append("ROWNUM <= ").append(this.limit);
+			// limitClause.append(" AND ROWNUM >= ").append(this.offset);
+
 			int pageLimit = (this.limit == 0) ? 100 : this.limit;
 			int start = this.offset + 1;
 			int end = this.offset + pageLimit;
