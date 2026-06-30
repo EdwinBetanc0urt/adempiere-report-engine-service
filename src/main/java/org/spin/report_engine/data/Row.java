@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 import org.compiere.util.Util;
@@ -133,13 +134,27 @@ public class Row {
 		return "level=" + level + ", Row [data=" + data + "]";
 	}
 	
+	// Identity is based on the row's level and cell values (not on a serialized
+	// toString). Row is used as a HashMap key in SummaryHandler, where the key only
+	// holds the group-by cells; basing equals/hashCode on (level, data) is equivalent
+	// to the previous toString comparison but avoids building a string on every
+	// lookup. Cell already implements equals/hashCode by value, so Map<Integer,Cell>
+	// compares and hashes correctly element by element.
 	@Override
 	public int hashCode() {
-	    return toString().hashCode();
+		return Objects.hash(level, data);
 	}
-	
+
 	@Override
 	public boolean equals(Object o) {
-	    return toString().equals(((Row)o).toString());
+		if (this == o) {
+			return true;
+		}
+		if (!(o instanceof Row)) {
+			return false;
+		}
+		Row other = (Row) o;
+		return level == other.level && Objects.equals(data, other.data);
 	}
+
 }
