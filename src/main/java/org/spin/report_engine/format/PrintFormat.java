@@ -22,6 +22,7 @@ import java.util.stream.Collectors;
 
 import org.adempiere.core.domains.models.I_AD_PrintFormatItem;
 import org.adempiere.core.domains.models.I_AD_ReportView;
+import org.compiere.model.MColumn;
 import org.compiere.model.MLookupFactory;
 import org.compiere.model.MReportView;
 import org.compiere.model.MTable;
@@ -66,7 +67,7 @@ public class PrintFormat {
 		this.tableName = MTable.getTableName(printFormat.getCtx(), printFormat.getAD_Table_ID());
 		this.isSummary = printFormat.isSummary();
 
-		//	Get Views
+		//	Get Views (batch load in a single query instead of one hit per id)
 		this.reportViews = new ArrayList<ReportView>();
 		new Query(
 				Env.getCtx(),
@@ -75,14 +76,13 @@ public class PrintFormat {
 				null
 			)
 			.setParameters(tableId)
-			.getIDsAsList()
-			.forEach(reportViewId -> {
-				MReportView reportView = new MReportView(Env.getCtx(), reportViewId, null);
+			.<MReportView>list()
+			.forEach(reportView -> {
 				this.reportViews.add(ReportView.newInstance(reportView));
 			})
 		;
 
-		//	Get Items
+		//	Get Items (batch load in a single query instead of one hit per id)
 		this.items = new ArrayList<PrintFormatItem>();
 		new Query(
 			Env.getCtx(),
@@ -92,22 +92,22 @@ public class PrintFormat {
 		)
 			.setParameters(printFormatId)
 			.setOrderBy(I_AD_PrintFormatItem.COLUMNNAME_SeqNo)
-			.getIDsAsList()
-			.forEach(printFormatItemId -> {
-				MPrintFormatItem printFormatItem = new MPrintFormatItem(Env.getCtx(), printFormatItemId, null);
+			.<MPrintFormatItem>list()
+			.forEach(printFormatItem -> {
 				this.items.add(PrintFormatItem.newInstance(printFormatItem));
 			})
 		;
 
-		//	Get Columns
-		List<String> baseColumnNames = table.getColumnsAsList()
+		//	Get Columns (load once and reuse for both the base-column list and the definition)
+		List<MColumn> tableColumns = table.getColumnsAsList();
+		List<String> baseColumnNames = tableColumns
 			.stream()
 			.filter(column -> Util.isEmpty(column.getColumnSQL(), true))
 			.map(column -> column.getColumnName())
 			.collect(Collectors.toList())
 		;
 		this.baseColumnNames = baseColumnNames;
-		this.columnsDefinition = table.getColumnsAsList()
+		this.columnsDefinition = tableColumns
 			.stream()
 			.map(column -> {
 				String columnName = column.getColumnName();
