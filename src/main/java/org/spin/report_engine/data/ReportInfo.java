@@ -15,6 +15,7 @@
 package org.spin.report_engine.data;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -395,18 +396,22 @@ public class ReportInfo {
 	 * @return
 	 */
 	public List<Row> getRowsAsTree() {
+		// Index rows by level once so each parent resolves its candidate children from a
+		// pre-bucketed list instead of re-scanning the whole rows list (O(n^2) -> ~O(n)).
+		// The bucket preserves the rows order, so exact-level lookups are identical to the
+		// previous full-scan filter. Deeper "> level" scans keep using rows to preserve
+		// the original global ordering.
+		Map<Integer, List<Row>> rowsByLevel = indexRowsByLevel();
 		if(isFinancialReport()) {
 			List<Row> tree = new ArrayList<Row>();
 			//	Add parent level
-			rows.stream()
-				.filter(row -> {
-					return row.getLevel() == 0;
-				}).forEach(row -> {
+			rowsByLevel.getOrDefault(0, Collections.emptyList())
+				.forEach(row -> {
 					tree.add(row);
 				})
 			;
 			tree.forEach(treeValue -> {
-				processChildrenFinancialReport(treeValue, 1);
+				processChildrenFinancialReport(treeValue, 1, rowsByLevel);
 			});
 			return tree;
 		} else {
@@ -414,16 +419,13 @@ public class ReportInfo {
 			if(levelGroup != null) {
 				List<Row> tree = new ArrayList<Row>();
 				//	Add parent level
-				rows.stream()
-					.filter(row -> {
-						return row.getLevel() == levelGroup.getSortSequence();
-					})
+				rowsByLevel.getOrDefault(levelGroup.getSortSequence(), Collections.emptyList())
 					.forEach(row -> {
 						tree.add(row);
 					})
 				;
 				tree.forEach(treeValue -> {
-					processChildren(treeValue, 1);
+					processChildren(treeValue, 1, rowsByLevel);
 				});
 				return tree;
 			}
@@ -431,50 +433,62 @@ public class ReportInfo {
 		return rows;
 	}
 
-	private void processChildrenFinancialReport(Row parent, int levelAsInt) {
+	private Map<Integer, List<Row>> indexRowsByLevel() {
+		Map<Integer, List<Row>> byLevel = new HashMap<Integer, List<Row>>();
+		rows.forEach(row -> byLevel.computeIfAbsent(row.getLevel(), key -> new ArrayList<Row>()).add(row));
+		return byLevel;
+	}
+
+	private void processChildrenFinancialReport(Row parent, int levelAsInt, Map<Integer, List<Row>> rowsByLevel) {
 		List<Row> children = parent.getChildren();
-		rows.stream()
+		rowsByLevel.getOrDefault(levelAsInt, Collections.emptyList())
+			.stream()
 			.filter(row -> {
-				return row.getLevel() == levelAsInt 
-					&& row.getSequence() == parent.getSequence()
-				;
+				return row.getSequence() == parent.getSequence();
 			})
 			.forEach(row -> {
 				children.add(row);
 			})
 		;
 		int nextLevel = levelAsInt + 1;
-		children.forEach(child -> processChildrenFinancialReport(child, nextLevel));
+		children.forEach(child -> processChildrenFinancialReport(child, nextLevel, rowsByLevel));
 	}
 
-	private void processChildren(Row parent, int levelAsInt) {
+	private void processChildren(Row parent, int levelAsInt, Map<Integer, List<Row>> rowsByLevel) {
 		List<Row> children = parent.getChildren();
 		PrintFormatItem previosLevelGroup = groupLevels.get(levelAsInt - 1);
 		PrintFormatItem levelGroup = groupLevels.get(levelAsInt);
 		if((levelGroup == null && groupLevels.size() > 1) || previosLevelGroup == null) {
 			return;
 		}
-		rows.stream()
-			.filter(row -> {
-				if(levelGroup == null && row.getLevel() > parent.getLevel() && compareRows(parent, row, levelAsInt)) {
-					return true;
-				}
-				if(levelGroup != null && row.getLevel() == levelGroup.getSortSequence() && compareRows(parent, row, levelAsInt)) {
-					return true;
-				}
-				return false;
-			})
-			.forEach(row -> {
-				children.add(row);
-			})
-		;
+		if(levelGroup != null) {
+			//	Exact-level children: iterate only that level's bucket (same rows and order
+			//	as the previous full-scan filter on row.getLevel() == sortSequence).
+			rowsByLevel.getOrDefault(levelGroup.getSortSequence(), Collections.emptyList())
+				.stream()
+				.filter(row -> compareRows(parent, row, levelAsInt))
+				.forEach(row -> {
+					children.add(row);
+				})
+			;
+		} else {
+			//	Leaf rows at any deeper level: keep the global-order scan over rows.
+			rows.stream()
+				.filter(row -> {
+					return row.getLevel() > parent.getLevel() && compareRows(parent, row, levelAsInt);
+				})
+				.forEach(row -> {
+					children.add(row);
+				})
+			;
+		}
 		//	No Recursive
-		if(groupLevels.size() == 1) {	
+		if(groupLevels.size() == 1) {
 			return;
 		}
 		int nextLevel = levelAsInt + 1;
 		if(nextLevel < groupLevels.size()) {
-			children.forEach(child -> processChildren(child, nextLevel));
+			children.forEach(child -> processChildren(child, nextLevel, rowsByLevel));
 		} else {
 			children.forEach(child -> processAllChildren(child));
 		}
