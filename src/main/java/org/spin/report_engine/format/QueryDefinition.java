@@ -15,9 +15,9 @@
 package org.spin.report_engine.format;
 
 import java.util.ArrayList;
-import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
-import java.util.Optional;
+import java.util.Map;
 
 import org.adempiere.core.domains.models.I_AD_PInstance;
 import org.compiere.model.MRole;
@@ -187,6 +187,24 @@ public class QueryDefinition {
 		return this;
 	}
 
+	/**
+	 * Register a column under a name that a condition may use to reference it, keeping the
+	 * column with the greatest alias on collisions (and, on a tie, the first one seen) so the
+	 * resolution matches the previous {@code sorted(...reversed()).findFirst()} selection.
+	 */
+	private static void indexConditionColumn(Map<String, PrintFormatColumn> index, String key, PrintFormatColumn column) {
+		PrintFormatColumn current = index.get(key);
+		if (current == null) {
+			index.put(key, column);
+			return;
+		}
+		String candidateAlias = column.getColumnNameAlias();
+		String currentAlias = current.getColumnNameAlias();
+		if (candidateAlias != null && (currentAlias == null || candidateAlias.compareTo(currentAlias) > 0)) {
+			index.put(key, column);
+		}
+	}
+
 	public QueryDefinition buildQuery() {
 		// Add Query columns
 		String query = getQuery();
@@ -198,26 +216,23 @@ public class QueryDefinition {
 				this.getWhereClause()
 			);
 		}
+		//	Index the columns by the name a condition may reference: the column name itself and
+		//	its "_To" upper-bound name. Building this once turns every condition lookup into an
+		//	O(1) map get instead of re-scanning and re-sorting all columns per condition.
+		Map<String, PrintFormatColumn> columnByConditionName = new HashMap<String, PrintFormatColumn>();
+		getColumns().forEach(column -> {
+			indexConditionColumn(columnByConditionName, column.getColumnName(), column);
+			indexConditionColumn(columnByConditionName, column.getColumnName() + "_To", column);
+		});
 		getConditions().stream()
 			.filter(condition -> !Util.isEmpty(condition.getColumnName(), true))
 			.forEach(condition -> {
-				Optional<PrintFormatColumn> maybeColumn = getColumns()
-					.stream()
-					.filter(column -> {
-						final String conditionColumnName = condition.getColumnName();
-						return conditionColumnName.equals(column.getColumnName())
-							|| conditionColumnName.equals(column.getColumnName() + "_To");
-					})
-					.sorted(Comparator.comparing(PrintFormatColumn::getColumnNameAlias)
-					.reversed())
-					.findFirst()
-				;
-				if(maybeColumn.isPresent()) {
+				PrintFormatColumn column = columnByConditionName.get(condition.getColumnName());
+				if(column != null) {
 					// TODO: Improve add 1=1 to remove `if (whereClause.length() > 0)`
 					if (whereClause.length() > 0) {
 						whereClause.append(" AND ");
 					}
-					PrintFormatColumn column = maybeColumn.get();
 					condition.setColumnName(column.getColumnNameAlias());
 					String restriction = getRestrictionByOperator(condition, column.getReferenceId());
 					whereClause.append(restriction);
