@@ -20,9 +20,9 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 import org.adempiere.core.domains.models.I_AD_PInstance;
 import org.adempiere.core.domains.models.I_AD_PrintFormat;
@@ -51,6 +51,7 @@ import org.spin.report_engine.data.Cell;
 import org.spin.report_engine.data.ReportInfo;
 import org.spin.report_engine.export.XlsxExporter;
 import org.spin.report_engine.format.PrintFormat;
+import org.spin.report_engine.format.PrintFormatColumn;
 import org.spin.report_engine.format.PrintFormatItem;
 import org.spin.report_engine.format.QueryDefinition;
 import org.spin.report_engine.mapper.DefaultMapping;
@@ -313,9 +314,10 @@ public class ReportBuilder {
 		reportInfo.withRecordCount(paginated
 			? CountUtil.countRecords(queryDefinition.getCompleteQueryCount(), format.getTableName(), queryDefinition.getParameters(), transactionName)
 			: 0);
+		final Map<String, List<PrintFormatColumn>> columnsByName = indexColumnsByName(queryDefinition);
 		DB.runResultSet(transactionName, queryDefinition.getCompleteQuery(), queryDefinition.getParameters(), resulset -> {
 			while (resulset.next()) {
-				readRow(resulset, printFormatsList, queryDefinition, reportInfo, language);
+				readRow(resulset, printFormatsList, columnsByName, reportInfo, language);
 				if(format.getTableName().equals("T_Report")) {
 					reportInfo.addRow(resulset.getInt("LevelNo"), resulset.getInt("SeqNo"));
 				} else {
@@ -334,19 +336,29 @@ public class ReportBuilder {
 	}
 
 	/**
+	 * Index the query columns by their column name once, so {@link #readRow} can resolve
+	 * an item's columns with a single map lookup instead of scanning the whole column list
+	 * for every item of every row. An item may map to more than one query column (the raw
+	 * value column plus its display-value column), so the values are lists.
+	 */
+	private static Map<String, List<PrintFormatColumn>> indexColumnsByName(QueryDefinition queryDefinition) {
+		return queryDefinition.getQueryColumns()
+			.stream()
+			.collect(Collectors.groupingBy(PrintFormatColumn::getColumnName))
+		;
+	}
+
+	/**
 	 * Build the cells for the current {@link ResultSet} row into the report's row
 	 * accumulator. Shared by the buffered and the streaming read paths.
 	 */
-	private void readRow(ResultSet resulset, List<PrintFormatItem> printFormatsList, QueryDefinition queryDefinition, ReportInfo reportInfo, Language language) {
+	private void readRow(ResultSet resulset, List<PrintFormatItem> printFormatsList, Map<String, List<PrintFormatColumn>> columnsByName, ReportInfo reportInfo, Language language) {
 		printFormatsList.forEach(item -> {
-			Map<String, Cell> cells = new HashMap<String, Cell>();
-			queryDefinition.getQueryColumns()
-				.stream()
-				.filter(column -> {
-					return column.getColumnName().equals(item.getColumnName());
-				})
-				.forEach(column -> {
-					Cell cell = Optional.ofNullable(cells.get(column.getColumnName())).orElse(Cell.newInstance());
+			List<PrintFormatColumn> itemColumns = columnsByName.get(item.getColumnName());
+			Cell cell = null;
+			if(itemColumns != null) {
+				cell = Cell.newInstance();
+				for(PrintFormatColumn column : itemColumns) {
 					try {
 						if(column.isDisplayValue()) {
 							cell.withDisplayValue(resulset.getString(column.getColumnNameAlias()));
@@ -366,10 +378,9 @@ public class ReportBuilder {
 					} catch (Exception e) {
 						logger.warning(e.getLocalizedMessage());
 					}
-					cells.put(item.getColumnName(), cell);
-				})
-			;
-			reportInfo.addCell(item, cells.get(item.getColumnName()));
+				}
+			}
+			reportInfo.addCell(item, cell);
 		});
 	}
 
@@ -381,6 +392,7 @@ public class ReportBuilder {
 	private void runStreamingExport(PrintFormat format, QueryDefinition queryDefinition, ReportInfo reportInfo, String transactionName, Language language) {
 		streamingExporter.beginStream(reportInfo);
 		final List<PrintFormatItem> printFormatsList = format.getItems();
+		final Map<String, List<PrintFormatColumn>> columnsByName = indexColumnsByName(queryDefinition);
 		CPreparedStatement pstmt = null;
 		ResultSet resultSet = null;
 		int count = 0;
@@ -391,7 +403,7 @@ public class ReportBuilder {
 			DB.setParameters(pstmt, queryDefinition.getParameters());
 			resultSet = pstmt.executeQuery();
 			while (resultSet.next()) {
-				readRow(resultSet, printFormatsList, queryDefinition, reportInfo, language);
+				readRow(resultSet, printFormatsList, columnsByName, reportInfo, language);
 				streamingExporter.writeStreamRow(reportInfo.drainRow());
 				count++;
 			}
