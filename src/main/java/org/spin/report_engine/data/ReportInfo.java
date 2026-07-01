@@ -341,17 +341,25 @@ public class ReportInfo {
 		summaryRows = new ArrayList<Row>();
 		completeRows.forEach(row -> {
 			Row newRow = Row.newInstance().withSourceRowDefinition(row);
+			//	Summary/group rows are assembled by SummaryHandler and never pass through
+			//	readRow, so their cells still need the display mapping applied here. Regular
+			//	rows were already mapped while reading the ResultSet (readRow uses the richer
+			//	overload, a superset of this one), so re-applying it would only recompute the
+			//	same display value; for those rows we just measure the rendered width.
+			boolean mapCells = newRow.isSummaryRow();
 			//	Items
 			printFormat.getItems().forEach(printFormatItem -> {
 				Cell cell = row.getCell(printFormatItem.getPrintFormatItemId());
-				//	Apply Default Mask
-				if(!Util.isEmpty(printFormatItem.getMappingClassName())) {
-					IColumnMapping customMapping = ClassLoaderMapping.loadClass(printFormatItem.getMappingClassName());
-					if(customMapping != null) {
-						customMapping.processValue(printFormatItem, language, cell);
+				//	Apply Default Mask (only for rows not already mapped by readRow)
+				if(mapCells) {
+					if(!Util.isEmpty(printFormatItem.getMappingClassName())) {
+						IColumnMapping customMapping = ClassLoaderMapping.loadClass(printFormatItem.getMappingClassName());
+						if(customMapping != null) {
+							customMapping.processValue(printFormatItem, language, cell);
+						}
+					} else {
+						DefaultMapping.newInstance().processValue(printFormatItem, language, cell);
 					}
-				} else {
-					DefaultMapping.newInstance().processValue(printFormatItem, language, cell);
 				}
 				int newLength = Optional.ofNullable(cell.getDisplayValue()).orElse("").length();
 				if(columnLength.containsKey(printFormatItem.getPrintFormatItemId())) {
