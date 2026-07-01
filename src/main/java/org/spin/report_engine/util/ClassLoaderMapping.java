@@ -15,6 +15,8 @@
 package org.spin.report_engine.util;
 
 import java.lang.reflect.Constructor;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.compiere.util.Util;
 import org.spin.report_engine.mapper.IColumnMapping;
@@ -24,6 +26,15 @@ import org.spin.report_engine.mapper.IColumnMapping;
  * @author Yamel Senih, ysenih@erpya.com, ERPCyA http://www.erpya.com
  */
 public class ClassLoaderMapping {
+
+	/**
+	 * Cache of resolved mapping instances keyed by class name. Mapping implementations are
+	 * stateless (all per-row data is passed to processValue), so a single instance can be
+	 * shared and reused across every cell/row, avoiding a Class.forName + reflective
+	 * instantiation on each cell.
+	 */
+	private static final Map<String, IColumnMapping> INSTANCE_CACHE = new ConcurrentHashMap<String, IColumnMapping>();
+
 	public static Class<?> getHandlerClass(String className) {
         //	Validate null values
         if(Util.isEmpty(className)) {
@@ -51,6 +62,14 @@ public class ClassLoaderMapping {
     }	//	getHandlerClass
 
 	public static IColumnMapping loadClass(String className) {
+		if (Util.isEmpty(className, true)) {
+			return null;
+		}
+		//	Reuse the cached instance when available; only instantiate on the first miss.
+		return INSTANCE_CACHE.computeIfAbsent(className, ClassLoaderMapping::createInstance);
+    }
+
+	private static IColumnMapping createInstance(String className) {
 		IColumnMapping mapping = null;
 		try {
 			Class<?> clazz = getHandlerClass(className);
