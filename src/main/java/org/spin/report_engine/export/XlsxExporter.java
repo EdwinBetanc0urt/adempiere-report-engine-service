@@ -70,14 +70,43 @@ import org.spin.util.support.IAppSupport;
  */
 public class XlsxExporter implements IReportEngineExporter {
 
+	/** Rows kept in memory before SXSSF flushes them to disk (streaming window). */
+	private static final int DEFAULT_FLUSH_ROWS = 100;
+
+	/** System property to tune the SXSSF flush window without a rebuild. */
+	private static final String FLUSH_ROWS_PROPERTY = "report.engine.xlsx.flushRows";
+
+	/** Fixed column width (1/256th of a character) applied when auto-sizing is unavailable. */
+	private static final int DEFAULT_COLUMN_WIDTH = 20 * 256;
+
 	public static XlsxExporter newInstance() {
 		return new XlsxExporter();
 	}
-	
+
 	private XlsxExporter() {
-		workBook = new SXSSFWorkbook(100);
+		workBook = new SXSSFWorkbook(getFlushRows());
 		language = Language.getLoginLanguage();
 		dataFormat = workBook.createDataFormat();
+	}
+
+	/**
+	 * Resolve the SXSSF flush window, allowing an override via the
+	 * {@value #FLUSH_ROWS_PROPERTY} system property; falls back to
+	 * {@link #DEFAULT_FLUSH_ROWS} when unset or invalid.
+	 */
+	private static int getFlushRows() {
+		String configured = System.getProperty(FLUSH_ROWS_PROPERTY);
+		if (!Util.isEmpty(configured)) {
+			try {
+				int value = Integer.parseInt(configured.trim());
+				if (value > 0) {
+					return value;
+				}
+			} catch (NumberFormatException e) {
+				// ignore and fall back to the default
+			}
+		}
+		return DEFAULT_FLUSH_ROWS;
 	}
 	
 	private SXSSFWorkbook workBook;
@@ -228,7 +257,7 @@ public class XlsxExporter implements IReportEngineExporter {
 	 */
 	public String finishStream() {
 		IntStream.range(0, streamColumns.size())
-			.forEach(columnNumber -> streamSheet.setColumnWidth(columnNumber, 20 * 256))
+			.forEach(columnNumber -> streamSheet.setColumnWidth(columnNumber, DEFAULT_COLUMN_WIDTH))
 		;
 		streamSheet.createFreezePane(0, 1);
 		return writeFile();
